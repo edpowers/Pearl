@@ -1,2 +1,4 @@
 Pearl.egg-info/
 build/
+
+*.pyc
