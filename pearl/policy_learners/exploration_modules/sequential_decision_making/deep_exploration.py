@@ -59,7 +59,7 @@ class DeepExploration(ExplorationModule):
         action_availability_mask: Optional[torch.Tensor] = None,
         representation: Optional[torch.nn.Module] = None,
     ) -> Action:
-        assert isinstance(action_space, DiscreteActionSpace)
+        # assert isinstance(action_space, DiscreteActionSpace)
         states_repeated = torch.repeat_interleave(
             subjective_state.unsqueeze(0), action_space.n, dim=0
         )

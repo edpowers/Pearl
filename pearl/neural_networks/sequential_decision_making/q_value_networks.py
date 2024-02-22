@@ -141,13 +141,14 @@ class VanillaQValueNetwork(QValueNetwork):
         )
 
     def forward(self, x: Tensor) -> Tensor:
-        return self._model(x)
+        return self._model(x.float())
 
     def get_q_values(
         self,
         state_batch: Tensor,
         action_batch: Tensor,
         curr_available_actions_batch: Optional[Tensor] = None,
+        persistent: bool = False,
     ) -> Tensor:
         x = torch.cat([state_batch, action_batch], dim=-1)
         return self.forward(x).view(-1)
@@ -211,7 +212,7 @@ class QuantileQValueNetwork(DistributionalQValueNetwork):
         )
 
     def forward(self, x: Tensor) -> Tensor:
-        return self._model(x)
+        return self._model(x.float())
 
     def get_q_value_distribution(
         self,
@@ -528,7 +529,7 @@ class EnsembleQValueNetwork(QValueNetwork):
     def forward(
         self, x: Tensor, z: Optional[Tensor] = None, persistent: bool = False
     ) -> Tensor:
-        return self._model(x, z=z, persistent=persistent)
+        return self._model(x.float(), z=z, persistent=persistent)
 
     def get_q_values(
         self,
@@ -594,7 +595,7 @@ class CNNQValueNetwork(VanillaCNN):
         self._action_dim = action_dim
 
     def forward(self, x: Tensor) -> Tensor:
-        return self._model(x)
+        return self._model(x.float())
 
     def get_q_values(
         self,

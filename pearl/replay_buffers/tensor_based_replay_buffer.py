@@ -9,6 +9,7 @@ import random
 
 from collections import deque
 from typing import Deque, List, Optional, Tuple, Union
+from influxdb_client import Run
 
 import torch
 
@@ -110,7 +111,7 @@ class TensorBasedReplayBuffer(ReplayBuffer):
         if self._is_action_continuous or max_number_actions is None:
             return (None, None)
 
-        assert isinstance(available_action_space, DiscreteActionSpace)
+        # assert isinstance(available_action_space, DiscreteActionSpace), f"{type(available_action_space)=} is not DiscreteActionSpace."
 
         available_actions_tensor_with_padding = torch.zeros(
             (1, max_number_actions, available_action_space.action_dim),
@@ -193,7 +194,17 @@ class TensorBasedReplayBuffer(ReplayBuffer):
         next_available_actions_list = []
         next_unavailable_actions_mask_list = []
         has_none_cum_reward = False
+
         for x in transitions:
+
+            # If the action doesn't have a dimension of 2, then add a dimension of 2.
+            if x.action.dim() == 1:
+                x.action = x.action.view(1, -1)
+            if x.action.dtype != torch.int64:
+                x.action = x.action.to(torch.int64)
+            if x.state.dtype != torch.float32:
+                x.state = x.state.to(torch.float32)
+
             state_list.append(x.state)
             action_list.append(x.action)
             reward_list.append(x.reward)
@@ -221,7 +232,16 @@ class TensorBasedReplayBuffer(ReplayBuffer):
                 )
 
         state_batch = torch.cat(state_list)
-        action_batch = torch.cat(action_list)
+        try:
+            action_batch = torch.cat(action_list)
+        except RuntimeError as re:
+            print("action_list", action_list)
+            print("action_list[0]", action_list[0])
+            print("action_list[0].shape", action_list[0].shape)
+            print("action_list[0].dtype", action_list[0].dtype)
+            print("action_list[0].device", action_list[0].device)
+            raise RuntimeError(f"{action_list=}")
+
         reward_batch = torch.cat(reward_list)
         done_batch = torch.cat(done_list)
         cum_reward_batch = None

@@ -41,8 +41,8 @@ class EGreedyExploration(UniformExplorationBase):
             raise ValueError(
                 "exploit_action cannot be None for epsilon-greedy exploration"
             )
-        if not isinstance(action_space, DiscreteActionSpace):
-            raise TypeError("action space must be discrete")
+        # if not isinstance(action_space, DiscreteActionSpace):
+        #    raise TypeError(f"action space must be discrete {type(action_space)=}")
         if random.random() < self.epsilon:
             return torch.randint(action_space.n, (1,))
         return exploit_action

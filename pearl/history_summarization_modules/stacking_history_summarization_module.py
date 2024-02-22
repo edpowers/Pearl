@@ -42,7 +42,20 @@ class StackingHistorySummarizationModule(HistorySummarizationModule):
 
         observation = assert_is_tensor_like(observation)
         action = assert_is_tensor_like(action)
-        assert observation.shape[-1] + action.shape[-1] == self.history.shape[-1]
+
+        assert observation.shape[-1] + action.shape[-1] == self.history.shape[-1], (
+            f"{observation.shape=} {action.shape=} {self.history.shape=}"
+        )
+
+        if action.dim() == 1:
+            # Then create a tensor of shape (1, action_dim)
+            action = action.view(1, -1)
+
+        assert action.dim() == 2, f"{action.dim()=}"
+
+        # The observation takes on a dimension of 2 when we run:
+        # observation = observation.view(1, -1)
+
         observation_action_pair = torch.cat(
             (action, observation.view(1, -1)), dim=-1
         ).detach()
@@ -62,6 +75,10 @@ class StackingHistorySummarizationModule(HistorySummarizationModule):
 
     def forward(self, x: History) -> torch.Tensor:
         x = assert_is_tensor_like(x)
+        try:
+            x = assert_is_tensor_like(x)
+        except AssertionError as ae:
+            raise AssertionError(f"{type(x)=} {x=} is not a tensor like object.") from ae
         return x
 
     def reset(self) -> None:

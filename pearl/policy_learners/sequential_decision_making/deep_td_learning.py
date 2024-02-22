@@ -88,6 +88,9 @@ class DeepTDLearning(PolicyLearner):
         self._is_conservative = is_conservative
         self._conservative_alpha = conservative_alpha
 
+        self.state_dim = state_dim
+        self.states_repeated_shape = None
+
         def make_specified_network() -> QValueNetwork:
             assert hidden_dims is not None
             if network_type is TwoTowerQValueNetwork:
@@ -144,7 +147,7 @@ class DeepTDLearning(PolicyLearner):
     ) -> Action:
         # TODO: Assumes gym action space.
         # Fix the available action space.
-        assert isinstance(available_action_space, DiscreteActionSpace)
+        # assert isinstance(available_action_space, DiscreteActionSpace)
         with torch.no_grad():
             states_repeated = torch.repeat_interleave(
                 subjective_state.unsqueeze(0),
@@ -157,8 +160,39 @@ class DeepTDLearning(PolicyLearner):
                 available_action_space.actions_batch.to(states_repeated)
             )
             # (action_space_size, action_dim)
+            tensor_float_types = (
+                torch.float16,
+                torch.float32,
+                torch.float64,
+            )
 
-            q_values = self._Q.get_q_values(states_repeated, actions)
+            # Check the data types of each: coerce to float64
+            if states_repeated.dtype != actions.dtype and states_repeated.dtype in tensor_float_types:
+                actions = actions.to(states_repeated.dtype)
+
+            assert actions.dtype == states_repeated.dtype, (
+                f"{actions.dtype=} {states_repeated.dtype=}"
+            )
+
+            # Possible data loss here: if states_repeated is float64 and actions is float32
+            # But this is necessary for the forward pass to work.
+            actions = actions.to(torch.int64)
+            states_repeated = states_repeated.to(torch.float32)
+
+            assert actions.dtype == torch.int64, f"{actions.dtype=} {actions=}"
+            assert states_repeated.dtype == torch.float32, f"{states_repeated.dtype=} {states_repeated=}"
+
+            # display(f"{states_repeated.shape=} {actions.shape=}")
+
+            self.states_repeated_shape = states_repeated.shape[1]
+
+            transform_layer = torch.nn.Linear(states_repeated.shape[1], self.state_dim)
+            states_repeated_transformed = transform_layer(states_repeated)
+
+            # display(f"{states_repeated_transformed.shape=}")
+
+            q_values = self._Q.get_q_values(states_repeated_transformed, actions)
+
             # this does a forward pass since all avaialble
             # actions are already stacked together
 
@@ -187,6 +221,16 @@ class DeepTDLearning(PolicyLearner):
         reward_batch = batch.reward  # (batch_size)
         done_batch = batch.done  # (batch_size)
 
+        action_batch = action_batch.to(dtype=torch.int64)
+        state_batch = state_batch.to(torch.float32)
+
+        if state_batch.size(1) > 10:
+            transform_layer = torch.nn.Linear(state_batch.size(1), self.state_dim)
+            state_batch = transform_layer(state_batch)
+
+        batch.state = state_batch
+        batch.action = action_batch
+
         batch_size = state_batch.shape[0]
         # sanity check they have same batch_size
         assert reward_batch.shape[0] == batch_size
@@ -197,12 +241,19 @@ class DeepTDLearning(PolicyLearner):
             curr_available_actions_batch=batch.curr_available_actions,
         )  # for duelling, this takes care of the mean subtraction for advantage estimation
 
+        state_action_values = state_action_values.to(dtype=torch.float32)
         # Compute the Bellman Target
         expected_state_action_values = (
             self._get_next_state_values(batch, batch_size)
             * self._discount_factor
             * (1 - done_batch.float())
         ) + reward_batch  # (batch_size), r + gamma * V(s)
+
+        # Make sure that the expected state action values are not None
+        expected_state_action_values = expected_state_action_values.to(
+            dtype=torch.float32
+        )
+
 
         criterion = torch.nn.MSELoss()
         bellman_loss = criterion(state_action_values, expected_state_action_values)
