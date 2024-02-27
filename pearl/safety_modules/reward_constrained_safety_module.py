@@ -61,7 +61,7 @@ class RCSafetyModuleCostCriticContinuousAction(SafetyModule):
         self.lr_lambda = lr_lambda
         self.lambda_constraint_ub_value = lambda_constraint_ub_value
         self.lambda_constraint = lambda_constraint_init_value
-        self.batch_size = batch_size
+        self._batch_size = batch_size
 
         # initialize parameters of cost critic
         assert hasattr(action_space, "action_dim")
@@ -106,10 +106,15 @@ class RCSafetyModuleCostCriticContinuousAction(SafetyModule):
         )
 
     def learn(self, replay_buffer: ReplayBuffer, policy_learner: PolicyLearner) -> None:
-        if len(replay_buffer) < self.batch_size or len(replay_buffer) == 0:
+        if len(replay_buffer) == 0:
             return
 
-        batch = replay_buffer.sample(self.batch_size)
+        if self._batch_size == -1 or len(replay_buffer) < self._batch_size:
+            batch_size = len(replay_buffer)
+        else:
+            batch_size = self._batch_size
+
+        batch = replay_buffer.sample(batch_size)
         assert isinstance(batch, TransitionBatch)
         batch = policy_learner.preprocess_batch(batch)
 

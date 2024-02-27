@@ -185,8 +185,6 @@ class TensorBasedReplayBuffer(ReplayBuffer):
         reward_list = []
         cost_list = []
         done_list = []
-        cum_reward_list = []
-        cum_reward_batch = 0
         next_state_list = []
         next_action_list = []
         curr_available_actions_list = []
@@ -211,10 +209,6 @@ class TensorBasedReplayBuffer(ReplayBuffer):
             done_list.append(x.done)
             if has_cost_available:
                 cost_list.append(x.cost)
-            if x.cum_reward is not None:
-                cum_reward_list.append(x.cum_reward)
-            else:
-                has_none_cum_reward = True
             if has_next_state:
                 next_state_list.append(x.next_state)
             if has_next_action:
@@ -244,13 +238,10 @@ class TensorBasedReplayBuffer(ReplayBuffer):
 
         reward_batch = torch.cat(reward_list)
         done_batch = torch.cat(done_list)
-        cum_reward_batch = None
         if has_cost_available:
             cost_batch = torch.cat(cost_list)
         else:
             cost_batch = None
-        if not has_none_cum_reward:
-            cum_reward_batch = torch.cat(cum_reward_list)
         next_state_batch, next_action_batch = None, None
         if has_next_state:
             next_state_batch = torch.cat(next_state_list)
@@ -280,6 +271,5 @@ class TensorBasedReplayBuffer(ReplayBuffer):
             next_available_actions=next_available_actions_batch,
             next_unavailable_actions_mask=next_unavailable_actions_mask_batch,
             done=done_batch,
-            cum_reward=cum_reward_batch,
             cost=cost_batch,
         ).to(self.device)

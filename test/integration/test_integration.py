@@ -65,8 +65,8 @@ from pearl.replay_buffers.sequential_decision_making.fifo_off_policy_replay_buff
 from pearl.replay_buffers.sequential_decision_making.fifo_on_policy_replay_buffer import (
     FIFOOnPolicyReplayBuffer,
 )
-from pearl.replay_buffers.sequential_decision_making.on_policy_episodic_replay_buffer import (
-    OnPolicyEpisodicReplayBuffer,
+from pearl.replay_buffers.sequential_decision_making.on_policy_replay_buffer import (
+    OnPolicyReplayBuffer,
 )
 from pearl.safety_modules.risk_sensitive_safety_modules import (
     QuantileNetworkMeanVarianceSafetyModule,
@@ -238,12 +238,13 @@ class TestIntegration(unittest.TestCase):
                 action_space=env.action_space,
                 actor_hidden_dims=[64, 64],
                 critic_hidden_dims=[64, 64],
-                training_rounds=1,
+                training_rounds=8,
+                batch_size=64,
                 action_representation_module=OneHotActionTensorRepresentationModule(
                     max_number_actions=num_actions
                 ),
             ),
-            replay_buffer=OnPolicyEpisodicReplayBuffer(10_000),
+            replay_buffer=OnPolicyReplayBuffer(10_000),
         )
         self.assertTrue(
             target_return_is_reached(
@@ -264,17 +265,22 @@ class TestIntegration(unittest.TestCase):
         env = GymEnvironment("CartPole-v1")
         assert isinstance(env.action_space, DiscreteActionSpace)
         num_actions = env.action_space.n
+        # We use a one hot representation for representing actions. So take
+        # action_dim = num_actions.
         q_network = DuelingQValueNetwork(
-            state_dim=env.observation_space.shape[0],
-            action_dim=num_actions,
-            hidden_dims=[64],
-            output_dim=1,
+            state_dim=env.observation_space.shape[
+                0
+            ],  # dimension of state representation
+            action_dim=num_actions,  # dimension of the action representation
+            hidden_dims=[64, 64],  # dimensions of the intermediate layers
+            output_dim=1,  # set to 1 (Q values are scalars)
         )
         agent = PearlAgent(
             policy_learner=DeepQLearning(
                 state_dim=env.observation_space.shape[0],
                 action_space=env.action_space,
-                training_rounds=20,
+                training_rounds=10,
+                soft_update_tau=0.75,
                 network_instance=q_network,
                 batch_size=batch_size,
                 action_representation_module=OneHotActionTensorRepresentationModule(
@@ -344,14 +350,14 @@ class TestIntegration(unittest.TestCase):
                 env.action_space,
                 actor_hidden_dims=[64, 64],
                 critic_hidden_dims=[64, 64],
-                training_rounds=50,
-                batch_size=64,
+                training_rounds=20,
+                batch_size=32,
                 epsilon=0.1,
                 action_representation_module=OneHotActionTensorRepresentationModule(
                     max_number_actions=num_actions
                 ),
             ),
-            replay_buffer=OnPolicyEpisodicReplayBuffer(10_000),
+            replay_buffer=OnPolicyReplayBuffer(10_000),
         )
         self.assertTrue(
             target_return_is_reached(
@@ -360,7 +366,8 @@ class TestIntegration(unittest.TestCase):
                 target_return=500,
                 max_episodes=1000,
                 learn=True,
-                learn_after_episode=True,
+                learn_every_k_steps=200,
+                learn_after_episode=False,
                 exploit=False,
             )
         )

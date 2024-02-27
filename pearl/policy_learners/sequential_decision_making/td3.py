@@ -89,22 +89,26 @@ class TD3(DeepDeterministicPolicyGradient):
         self._critic_update_count = 0
 
     def learn_batch(self, batch: TransitionBatch) -> Dict[str, Any]:
+        # The actor and the critic updates are arranged in the following way
+        # for the same reason as in the comment "If the history summarization module ..."
+        # in the learn_batch function in actor_critic_base.py.
 
-        critic_loss = self._critic_loss(batch)  # critic update
         self._critic_update_count += 1
-
+        report = {}
         # delayed actor update
-        self._critic_optimizer.zero_grad()
+        self._actor_optimizer.zero_grad()
         if self._critic_update_count % self._actor_update_freq == 0:
             # see ddpg base class for actor update details
             actor_loss = self._actor_loss(batch)
-            self._actor_optimizer.zero_grad()
-            (actor_loss + critic_loss).backward()
-            self._actor_optimizer.step()
-            self._critic_optimizer.step()
-        else:
-            critic_loss.backward()
-            self._critic_optimizer.step()
+            actor_loss.backward(retain_graph=True)
+            report["actor_loss"] = actor_loss.item()
+
+        self._critic_optimizer.zero_grad()
+        critic_loss = self._critic_loss(batch)  # critic update
+        critic_loss.backward()
+        self._actor_optimizer.step()
+        self._critic_optimizer.step()
+        report["critic_loss"] = critic_loss.item()
 
         if self._critic_update_count % self._actor_update_freq == 0:
             # update targets of critics using soft updates
@@ -119,7 +123,7 @@ class TD3(DeepDeterministicPolicyGradient):
                 self._actor_target, self._actor, self._actor_soft_update_tau
             )
 
-        return {}
+        return report
 
     def _critic_loss(self, batch: TransitionBatch) -> torch.Tensor:
         with torch.no_grad():
