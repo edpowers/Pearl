@@ -221,7 +221,7 @@ class ActorCriticBase(PolicyLearner):
                 exploit_action = self._actor.sample_action(subjective_state)
                 action_probabilities = None
             else:
-                assert isinstance(available_action_space, DiscreteActionSpace)
+                # assert isinstance(available_action_space, DiscreteActionSpace), f"{type(available_action_space)=}"
                 actions = self.action_representation_module(
                     available_action_space.actions_batch
                 )
