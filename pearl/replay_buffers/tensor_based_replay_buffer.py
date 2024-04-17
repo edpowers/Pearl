@@ -203,6 +203,16 @@ class TensorBasedReplayBuffer(ReplayBuffer):
             if x.state.dtype != torch.float32:
                 x.state = x.state.to(torch.float32)
 
+            if hasattr(x.next_action, "dim"):
+                # If the action doesn't have a dimension of 2, then add a dimension of 2.
+                if x.next_action.dim() == 1:
+                    x.next_action = x.next_action.view(1, -1)
+                if x.next_action.dtype != torch.int64:
+                    x.next_action = x.next_action.to(torch.int64)
+            if hasattr(x.next_state, "dtype"):
+                if x.next_state.dtype != torch.float32:
+                    x.next_state = x.next_state.to(torch.float32)
+
             state_list.append(x.state)
             action_list.append(x.action)
             reward_list.append(x.reward)
@@ -246,7 +256,16 @@ class TensorBasedReplayBuffer(ReplayBuffer):
         if has_next_state:
             next_state_batch = torch.cat(next_state_list)
         if has_next_action:
-            next_action_batch = torch.cat(next_action_list)
+            try:
+                next_action_batch = torch.cat(next_action_list)
+            except RuntimeError as re:
+                print("next_action_list", next_action_list)
+                print("next_action_list[0]", next_action_list[0])
+                print("next_action_list[0].shape", next_action_list[0].shape)
+                print("next_action_list[0].dtype", next_action_list[0].dtype)
+                print("next_action_list[0].device", next_action_list[0].device)
+                raise RuntimeError(f"{next_action_list=}")
+
         curr_available_actions_batch, curr_unavailable_actions_mask_batch = None, None
         if not is_action_continuous:
             curr_available_actions_batch = torch.cat(curr_available_actions_list)

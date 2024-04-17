@@ -59,7 +59,7 @@ def get_pearl_device(device_id: int = -1) -> torch.device:
 
 
 def is_distribution_enabled() -> bool:
-    return dist.is_initialized() and dist.is_available()
+    return dist.is_available() and dist.is_initialized()
 
 
 def get_default_device() -> torch.device:
