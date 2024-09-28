@@ -17,6 +17,7 @@ parent_dir = os.path.dirname(abs_file_dir)
 # Add the parent directory to sys.path
 if parent_dir not in sys.path:
     sys.path.append(parent_dir)
+# pyre-strict
 
 from .pearl_agent import PearlAgent
 

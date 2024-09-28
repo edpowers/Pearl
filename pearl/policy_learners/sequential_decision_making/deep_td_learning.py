@@ -5,6 +5,8 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+# pyre-strict
+
 import copy
 from abc import abstractmethod
 from typing import Any, Dict, List, Optional, Type
@@ -61,7 +63,7 @@ class DeepTDLearning(PolicyLearner):
         target_update_freq: int = 10,
         soft_update_tau: float = 0.1,
         is_conservative: bool = False,
-        conservative_alpha: float = 2.0,
+        conservative_alpha: Optional[float] = 2.0,
         network_type: Type[QValueNetwork] = VanillaQValueNetwork,
         state_output_dim: Optional[int] = None,
         action_output_dim: Optional[int] = None,
@@ -69,7 +71,6 @@ class DeepTDLearning(PolicyLearner):
         action_hidden_dims: Optional[List[int]] = None,
         network_instance: Optional[QValueNetwork] = None,
         action_representation_module: Optional[ActionRepresentationModule] = None,
-        **kwargs: Any,
     ) -> None:
         """Constructs a DeepTDLearning based policy learner. DeepTDLearning is the base class
         for all value based (i.e. temporal difference learning based) algorithms.
@@ -253,7 +254,8 @@ class DeepTDLearning(PolicyLearner):
             # this does a forward pass since all avaialble
             # actions are already stacked together
 
-            exploit_action = torch.argmax(q_values).view((-1))
+            exploit_action_index = torch.argmax(q_values)
+            exploit_action = available_action_space.actions[exploit_action_index]
 
         if exploit:
             return exploit_action
@@ -293,7 +295,7 @@ class DeepTDLearning(PolicyLearner):
         state_batch = batch.state  # (batch_size x state_dim)
         action_batch = batch.action  # (batch_size x action_dim)
         reward_batch = batch.reward  # (batch_size)
-        done_batch = batch.done  # (batch_size)
+        terminated_batch = batch.terminated  # (batch_size)
 
         action_batch = action_batch.to(dtype=torch.int64)
         state_batch = state_batch.to(torch.float32)
@@ -308,7 +310,7 @@ class DeepTDLearning(PolicyLearner):
         batch_size = state_batch.shape[0]
         # sanity check they have same batch_size
         assert reward_batch.shape[0] == batch_size
-        assert done_batch.shape[0] == batch_size
+        assert terminated_batch.shape[0] == batch_size
 
         state_action_values = self._Q.get_q_values(
             state_batch=state_batch,
@@ -323,7 +325,7 @@ class DeepTDLearning(PolicyLearner):
         expected_state_action_values = (
             self.get_next_state_values(batch, batch_size)
             * self._discount_factor
-            * (1 - done_batch.float())
+            * (1 - terminated_batch.float())
         ) + reward_batch  # (batch_size), r + gamma * V(s)
 
         # Make sure that the expected state action values are not None

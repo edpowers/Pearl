@@ -5,6 +5,8 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+# pyre-strict
+
 from typing import Optional
 
 import torch
@@ -46,9 +48,11 @@ class DeepExploration(ExplorationModule):
     def __init__(
         self,
         q_ensemble_network: EnsembleQValueNetwork,
+        action_representation_module: torch.nn.Module,
     ) -> None:
         super(DeepExploration, self).__init__()
         self.q_ensemble_network = q_ensemble_network
+        self.action_representation_module = action_representation_module
 
     def act(
         self,
@@ -68,14 +72,21 @@ class DeepExploration(ExplorationModule):
         actions = action_space.actions_batch.to(subjective_state.device)
         # (action_space_size, action_dim)
 
+        actions = self.action_representation_module(actions)
+
         with torch.no_grad():
             q_values = self.q_ensemble_network.get_q_values(
-                state_batch=states_repeated, action_batch=actions, persistent=True
+                state_batch=states_repeated,
+                action_batch=actions,
+                z=self.q_ensemble_network._model.z,
+                persistent=True,
             )
             # this does a forward pass since all available
             # actions are already stacked together
 
-        return torch.argmax(q_values).view((-1))
+        action_index = torch.argmax(q_values)
+        action = action_space.actions[action_index]
+        return action
 
     def reset(self) -> None:  # noqa: B027
         # sample a new epistemic index (i.e., a Q-network) at the beginning of a

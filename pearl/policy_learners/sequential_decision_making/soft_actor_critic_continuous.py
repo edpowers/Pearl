@@ -5,7 +5,9 @@
 # LICENSE file in the root directory of this source tree.
 #
 
-from typing import Any, Dict, List, Optional, Type
+# pyre-strict
+
+from typing import Any, Dict, List, Optional, Type, Union
 
 import torch
 from pearl.action_representation_modules.action_representation_module import (
@@ -28,11 +30,13 @@ from pearl.policy_learners.exploration_modules.exploration_module import (
 )
 from pearl.policy_learners.sequential_decision_making.actor_critic_base import (
     ActorCriticBase,
-    twin_critic_action_value_loss,
 )
 from pearl.replay_buffers.transition import TransitionBatch
+from pearl.utils.functional_utils.learning.critic_utils import (
+    twin_critic_action_value_loss,
+)
 from pearl.utils.instantiations.spaces.box import BoxSpace
-from torch import optim
+from torch import nn, optim
 
 
 class ContinuousSoftActorCritic(ActorCriticBase):
@@ -44,8 +48,8 @@ class ContinuousSoftActorCritic(ActorCriticBase):
         self,
         state_dim: int,
         action_space: ActionSpace,
-        actor_hidden_dims: List[int],
-        critic_hidden_dims: List[int],
+        actor_hidden_dims: Optional[List[int]] = None,
+        critic_hidden_dims: Optional[List[int]] = None,
         actor_learning_rate: float = 1e-3,
         critic_learning_rate: float = 1e-3,
         actor_network_type: Type[ActorNetwork] = GaussianActorNetwork,
@@ -58,6 +62,8 @@ class ContinuousSoftActorCritic(ActorCriticBase):
         entropy_coef: float = 0.2,
         entropy_autotune: bool = True,
         action_representation_module: Optional[ActionRepresentationModule] = None,
+        actor_network_instance: Optional[ActorNetwork] = None,
+        critic_network_instance: Optional[Union[QValueNetwork, nn.Module]] = None,
     ) -> None:
         super(ContinuousSoftActorCritic, self).__init__(
             state_dim=state_dim,
@@ -73,15 +79,19 @@ class ContinuousSoftActorCritic(ActorCriticBase):
             actor_soft_update_tau=0.0,
             critic_soft_update_tau=critic_soft_update_tau,
             use_twin_critic=True,
-            exploration_module=exploration_module
-            if exploration_module is not None
-            else NoExploration(),
+            exploration_module=(
+                exploration_module
+                if exploration_module is not None
+                else NoExploration()
+            ),
             discount_factor=discount_factor,
             training_rounds=training_rounds,
             batch_size=batch_size,
             is_action_continuous=True,
             on_policy=False,
             action_representation_module=action_representation_module,
+            actor_network_instance=actor_network_instance,
+            critic_network_instance=critic_network_instance,
         )
 
         self._entropy_autotune = entropy_autotune
@@ -129,18 +139,18 @@ class ContinuousSoftActorCritic(ActorCriticBase):
     def _critic_loss(self, batch: TransitionBatch) -> torch.Tensor:
 
         reward_batch = batch.reward  # shape: (batch_size)
-        done_batch = batch.done  # shape: (batch_size)
+        terminated_batch = batch.terminated  # shape: (batch_size)
 
-        if done_batch is not None:
+        if terminated_batch is not None:
             expected_state_action_values = (
                 self._get_next_state_expected_values(batch)
                 * self._discount_factor
-                * (1 - done_batch.float())
+                * (1 - terminated_batch.float())
             ) + reward_batch  # shape of expected_state_action_values: (batch_size)
         else:
-            raise AssertionError("done_batch should not be None")
+            raise AssertionError("terminated_batch should not be None")
 
-        loss = twin_critic_action_value_loss(
+        loss, _, _ = twin_critic_action_value_loss(
             state_batch=batch.state,
             action_batch=batch.action,
             expected_target_batch=expected_state_action_values,

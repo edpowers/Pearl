@@ -5,6 +5,8 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+# pyre-strict
+
 from abc import ABC, abstractmethod
 from typing import Optional
 
@@ -16,6 +18,17 @@ from pearl.api.state import SubjectiveState
 
 
 class ReplayBuffer(ABC):
+    """
+    A base class for all replay buffers.
+
+    Replay buffers store transitions collected from an agent's experience,
+    and batches of those transitions can be sampled to train the agent.
+
+    They are stored in the CPU since they may grow quite large,
+    but contain a property `device` which specifies where
+    batches are stored.
+    """
+
     def __init__(self) -> None:
         super().__init__()
         self._is_action_continuous: bool = False
@@ -23,12 +36,16 @@ class ReplayBuffer(ABC):
 
     @property
     @abstractmethod
-    def device(self) -> torch.device:
+    def device_for_batches(self) -> torch.device:
+        """
+        The device on which _batches_ are stored
+        (the replay buffer is always stored in the CPU).
+        """
         pass
 
-    @device.setter
+    @device_for_batches.setter
     @abstractmethod
-    def device(self, new_device: torch.device) -> None:
+    def device_for_batches(self, new_device_for_batches: torch.device) -> None:
         pass
 
     @abstractmethod
@@ -37,11 +54,11 @@ class ReplayBuffer(ABC):
         state: SubjectiveState,
         action: Action,
         reward: Reward,
-        next_state: SubjectiveState,
-        curr_available_actions: ActionSpace,
-        next_available_actions: ActionSpace,
-        done: bool,
-        max_number_actions: Optional[int],
+        terminated: bool,
+        curr_available_actions: Optional[ActionSpace] = None,
+        next_state: Optional[SubjectiveState] = None,
+        next_available_actions: Optional[ActionSpace] = None,
+        max_number_actions: Optional[int] = None,
         cost: Optional[float] = None,
     ) -> None:
         """Saves a transition."""

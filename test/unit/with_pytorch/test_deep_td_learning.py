@@ -5,6 +5,8 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+# pyre-strict
+
 import copy
 import unittest
 
@@ -47,7 +49,7 @@ class TestDeepTDLearning(unittest.TestCase):
                 next_state=torch.randn(self.state_dim),
                 curr_available_actions=self.action_space,
                 next_available_actions=self.action_space,
-                done=False,
+                terminated=False,
                 max_number_actions=self.action_space.n,
             )
         self.batch = buffer.sample(self.batch_size)

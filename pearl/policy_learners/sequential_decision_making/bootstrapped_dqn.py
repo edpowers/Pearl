@@ -5,6 +5,8 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+# pyre-strict
+
 from copy import deepcopy
 from typing import Any, Dict, Optional
 
@@ -12,8 +14,13 @@ import torch
 from pearl.action_representation_modules.action_representation_module import (
     ActionRepresentationModule,
 )
+from pearl.action_representation_modules.identity_action_representation_module import (
+    IdentityActionRepresentationModule,
+)
+from pearl.api.action import Action
 
 from pearl.api.action_space import ActionSpace
+from pearl.api.state import SubjectiveState
 from pearl.neural_networks.common.utils import update_target_network
 from pearl.neural_networks.sequential_decision_making.q_value_networks import (
     EnsembleQValueNetwork,
@@ -30,6 +37,7 @@ from pearl.replay_buffers.transition import (
     TransitionBatch,
     TransitionWithBootstrapMaskBatch,
 )
+from pearl.utils.instantiations.spaces.discrete_action import DiscreteActionSpace
 from torch import optim, Tensor
 
 
@@ -57,11 +65,19 @@ class BootstrappedDQN(DeepQLearning):
         soft_update_tau: float = 1.0,
         action_representation_module: Optional[ActionRepresentationModule] = None,
     ) -> None:
+        assert isinstance(action_space, DiscreteActionSpace)
+        if action_representation_module is None:
+            action_representation_module = IdentityActionRepresentationModule(
+                max_number_actions=action_space.n,
+                representation_dim=action_space.action_dim,
+            )
         PolicyLearner.__init__(
             self=self,
             training_rounds=training_rounds,
             batch_size=batch_size,
-            exploration_module=DeepExploration(q_ensemble_network),
+            exploration_module=DeepExploration(
+                q_ensemble_network, action_representation_module
+            ),
             on_policy=False,
             is_action_continuous=False,
             action_representation_module=action_representation_module,
@@ -110,7 +126,7 @@ class BootstrappedDQN(DeepQLearning):
                     batch=batch_filtered, batch_size=batch_filtered.state.shape[0], z=z
                 )
                 * self._discount_factor
-                * (1 - batch_filtered.done.float())
+                * (1 - batch_filtered.terminated.float())
             ) + batch_filtered.reward  # (batch_size), r + gamma * V(s)
 
             criterion = torch.nn.MSELoss()
@@ -132,9 +148,50 @@ class BootstrappedDQN(DeepQLearning):
         # Reset the `DeepExploration` module, which will resample the epistemic index.
         self._exploration_module.reset()
 
+    def act(
+        self,
+        subjective_state: SubjectiveState,
+        available_action_space: ActionSpace,
+        exploit: bool = False,
+    ) -> Action:
+        # Fix the available action space.
+        assert isinstance(available_action_space, DiscreteActionSpace)
+        with torch.no_grad():
+            states_repeated = torch.repeat_interleave(
+                subjective_state.unsqueeze(0),
+                available_action_space.n,
+                dim=0,
+            )
+            # (action_space_size x state_dim)
+
+            actions = self._action_representation_module(
+                available_action_space.actions_batch.to(states_repeated)
+            )
+            # (action_space_size, action_dim)
+
+            q_values = self._Q.get_q_values(
+                states_repeated, actions, z=self._Q._model.z
+            )
+            # this does a forward pass since all avaialble
+            # actions are already stacked together
+
+            exploit_action_index = torch.argmax(q_values)
+            exploit_action = available_action_space.actions[exploit_action_index]
+
+        if exploit:
+            return exploit_action
+
+        assert self._exploration_module is not None
+        return self._exploration_module.act(
+            subjective_state=subjective_state,
+            action_space=available_action_space,
+            exploit_action=exploit_action,
+            values=q_values,
+        )
+
     @torch.no_grad()
     def _get_next_state_values(
-        self, batch: TransitionBatch, batch_size: int, z: Optional[Tensor] = None
+        self, batch: TransitionBatch, batch_size: int, z: Tensor
     ) -> torch.Tensor:
         (
             next_state,

@@ -5,6 +5,8 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+# pyre-strict
+
 import logging
 from typing import Any, Dict, Iterable, Optional, Tuple, Union
 
@@ -35,13 +37,14 @@ def single_element_tensor_to_int(x: Tensor) -> int:
     return int(x)
 
 
+# pyre-fixme[24]: Generic type `np.ndarray` expects 2 type parameters.
 def tensor_to_numpy(x: Tensor) -> np.ndarray:
     return x.numpy(force=True)
 
 
 GYM_TO_PEARL_ACTION_SPACE = {
     "Discrete": DiscreteActionSpace,
-    "Box": BoxActionSpace
+    "Box": BoxActionSpace,
     # Add more here as needed
 }
 GYM_TO_PEARL_OBSERVATION_SPACE = {
@@ -49,6 +52,7 @@ GYM_TO_PEARL_OBSERVATION_SPACE = {
     "Box": BoxSpace,
     # Add more here as needed
 }
+# pyre-fixme[5]: Global expression must be annotated.
 PEARL_TO_GYM_ACTION = {
     "Discrete": single_element_tensor_to_int,
     "Box": tensor_to_numpy,
@@ -123,8 +127,12 @@ class GymEnvironment(Environment):
         if len(gym_action_result) == 4:
             # Older Gym versions use 'done' as opposed to 'terminated' and 'truncated'
             observation, reward, done, info = gym_action_result  # pyre-ignore
-            terminated = done
-            truncated = False
+            if done:
+                truncated = info["TimeLimit.truncated"]
+                terminated = not truncated
+            else:
+                truncated = False
+                terminated = False
         elif len(gym_action_result) == 5:
             # Newer Gym versions use 'terminated' and 'truncated'
             observation, reward, terminated, truncated, info = gym_action_result
@@ -173,7 +181,9 @@ class GymEnvironment(Environment):
 
 
 def _get_gym_action(
-    pearl_action: Action, gym_space: gym.Space
+    pearl_action: Action,
+    gym_space: gym.Space,
+    # pyre-fixme[24]: Generic type `np.ndarray` expects 2 type parameters.
 ) -> Union[int, np.ndarray]:
     """A helper function to convert a Pearl `Action` to an action compatible with
     the Gym action space `gym_space`."""

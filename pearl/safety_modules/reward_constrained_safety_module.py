@@ -5,6 +5,8 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+# pyre-strict
+
 from typing import Any, Dict, List, Type
 
 import torch
@@ -18,14 +20,14 @@ from pearl.neural_networks.sequential_decision_making.q_value_networks import (
 )
 from pearl.neural_networks.sequential_decision_making.twin_critic import TwinCritic
 from pearl.policy_learners.policy_learner import PolicyLearner
-from pearl.policy_learners.sequential_decision_making.actor_critic_base import (
+from pearl.replay_buffers.replay_buffer import ReplayBuffer
+from pearl.replay_buffers.transition import TransitionBatch
+from pearl.safety_modules.safety_module import SafetyModule
+from pearl.utils.functional_utils.learning.critic_utils import (
     make_critic,
     twin_critic_action_value_loss,
     update_critic_target_network,
 )
-from pearl.replay_buffers.replay_buffer import ReplayBuffer
-from pearl.replay_buffers.transition import TransitionBatch
-from pearl.safety_modules.safety_module import SafetyModule
 from torch import nn, optim
 
 
@@ -101,7 +103,6 @@ class RCSafetyModuleCostCriticContinuousAction(SafetyModule):
         update_critic_target_network(
             self.target_of_cost_critic,
             self.cost_critic,
-            self.use_twin_critic,
             1,
         )
 
@@ -130,9 +131,9 @@ class RCSafetyModuleCostCriticContinuousAction(SafetyModule):
         policy_learner: PolicyLearner,
         cost_critic: nn.Module,
     ) -> None:
-
         """
-        Update the lambda constraint based on the cost critic via a projected gradient descent update rule.
+        Update the lambda constraint based on the cost critic via a projected gradient descent
+        update rule.
         """
 
         with torch.no_grad():
@@ -172,12 +173,12 @@ class RCSafetyModuleCostCriticContinuousAction(SafetyModule):
             # cost + gamma * (min{Qtarget_1(s', a from target actor network),
             #                  Qtarget_2(s', a from target actor network)})
             expected_state_action_values = (
-                next_q * self.cost_discount_factor * (1 - batch.done.float())
+                next_q * self.cost_discount_factor * (1 - batch.terminated.float())
             ) + batch.cost  # (batch_size)
 
         # update twin critics towards bellman target
         assert isinstance(self.cost_critic, TwinCritic)
-        loss = twin_critic_action_value_loss(
+        loss, _, _ = twin_critic_action_value_loss(
             state_batch=batch.state,
             action_batch=batch.action,
             expected_target_batch=expected_state_action_values,
@@ -190,7 +191,6 @@ class RCSafetyModuleCostCriticContinuousAction(SafetyModule):
         update_critic_target_network(
             self.target_of_cost_critic,
             self.cost_critic,
-            self.use_twin_critic,
             self.critic_soft_update_tau,
         )
 

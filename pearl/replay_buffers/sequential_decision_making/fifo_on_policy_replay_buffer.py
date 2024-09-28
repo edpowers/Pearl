@@ -5,53 +5,45 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+# pyre-strict
+
 from typing import Optional
 
 import torch
 
 from pearl.api.action import Action
-from pearl.api.action_space import ActionSpace
 from pearl.api.reward import Reward
 from pearl.api.state import SubjectiveState
 from pearl.replay_buffers.tensor_based_replay_buffer import TensorBasedReplayBuffer
 from pearl.replay_buffers.transition import Transition
+from torch import Tensor
 
 
 class FIFOOnPolicyReplayBuffer(TensorBasedReplayBuffer):
+    """
+    This replay buffer is used to delay push for SARSA.
+    It waits until next action is available and only then does it push a transition
+    that contains that information.
+    """
+
     def __init__(self, capacity: int) -> None:
         super(FIFOOnPolicyReplayBuffer, self).__init__(capacity)
-        # this is used to delay push SARS
-        # wait for next action is available and then final push
-        # this is designed for single transition for now
         self.cache: Optional[Transition] = None
 
-    def push(
+    def _store_transition(
         self,
         state: SubjectiveState,
         action: Action,
         reward: Reward,
-        next_state: SubjectiveState,
-        curr_available_actions: ActionSpace,
-        next_available_actions: ActionSpace,
-        done: bool,
-        max_number_actions: Optional[int] = None,
+        terminated: bool,
+        curr_available_actions_tensor_with_padding: Optional[Tensor],
+        curr_unavailable_actions_mask: Optional[Tensor],
+        next_state: Optional[SubjectiveState],
+        next_available_actions_tensor_with_padding: Optional[Tensor],
+        next_unavailable_actions_mask: Optional[Tensor],
         cost: Optional[float] = None,
     ) -> None:
-        (
-            curr_available_actions_tensor_with_padding,
-            curr_unavailable_actions_mask,
-        ) = self._create_action_tensor_and_mask(
-            max_number_actions, curr_available_actions
-        )
-
-        (
-            next_available_actions_tensor_with_padding,
-            next_unavailable_actions_mask,
-        ) = self._create_action_tensor_and_mask(
-            max_number_actions, next_available_actions
-        )
-
-        current_state = self._process_single_state(state)
+        current_state = self._process_non_optional_single_state(state)
         current_action = self._process_single_action(action)
 
         if self.cache is not None:
@@ -74,10 +66,10 @@ class FIFOOnPolicyReplayBuffer(TensorBasedReplayBuffer):
                     curr_unavailable_actions_mask=self.cache.curr_unavailable_actions_mask,
                     next_available_actions=self.cache.next_available_actions,
                     next_unavailable_actions_mask=self.cache.next_unavailable_actions_mask,
-                    done=self.cache.done,
-                ).to(self.device)
+                    terminated=self.cache.terminated,
+                )
             )
-        if not done:
+        if not terminated:
             # save current push into cache
             self.cache = Transition(
                 state=current_state,
@@ -88,8 +80,8 @@ class FIFOOnPolicyReplayBuffer(TensorBasedReplayBuffer):
                 curr_unavailable_actions_mask=curr_unavailable_actions_mask,
                 next_available_actions=next_available_actions_tensor_with_padding,
                 next_unavailable_actions_mask=next_unavailable_actions_mask,
-                done=self._process_single_done(done),
-            ).to(self.device)
+                terminated=self._process_single_terminated(terminated),
+            )
         else:
             # for terminal state, push directly
             self.memory.append(
@@ -104,6 +96,6 @@ class FIFOOnPolicyReplayBuffer(TensorBasedReplayBuffer):
                     curr_unavailable_actions_mask=curr_unavailable_actions_mask,
                     next_available_actions=next_available_actions_tensor_with_padding,
                     next_unavailable_actions_mask=next_unavailable_actions_mask,
-                    done=self._process_single_done(done),
-                ).to(self.device)
+                    terminated=self._process_single_terminated(terminated),
+                )
             )

@@ -5,6 +5,8 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+# pyre-strict
+
 import random
 
 from collections import deque
@@ -21,6 +23,7 @@ from pearl.replay_buffers.replay_buffer import ReplayBuffer
 from pearl.replay_buffers.transition import Transition, TransitionBatch
 from pearl.utils.device import get_default_device
 from pearl.utils.instantiations.spaces.discrete_action import DiscreteActionSpace
+from torch import Tensor
 
 
 class TensorBasedReplayBuffer(ReplayBuffer):
@@ -42,89 +45,170 @@ class TensorBasedReplayBuffer(ReplayBuffer):
         self._has_next_action = has_next_action
         self._has_next_available_actions = has_next_available_actions
         self.has_cost_available = has_cost_available
-        self._device: torch.device = get_default_device()
+        self._device_for_batches: torch.device = get_default_device()
+
+    def _store_transition(
+        self,
+        state: SubjectiveState,
+        action: Action,
+        reward: Reward,
+        terminated: bool,
+        curr_available_actions_tensor_with_padding: Optional[Tensor],
+        curr_unavailable_actions_mask: Optional[Tensor],
+        next_state: Optional[SubjectiveState],
+        next_available_actions_tensor_with_padding: Optional[Tensor],
+        next_unavailable_actions_mask: Optional[Tensor],
+        cost: Optional[float] = None,
+    ) -> None:
+        """
+        Implements the way the replay buffer stores transitions.
+        """
+        raise NotImplementedError(f"{type(self)} has not implemented _store_transition")
+
+    def push(
+        self,
+        state: SubjectiveState,
+        action: Action,
+        reward: Reward,
+        terminated: bool,
+        curr_available_actions: Optional[ActionSpace] = None,
+        next_state: Optional[SubjectiveState] = None,
+        next_available_actions: Optional[ActionSpace] = None,
+        max_number_actions: Optional[int] = None,
+        cost: Optional[float] = None,
+    ) -> None:
+        (
+            curr_available_actions_tensor_with_padding,
+            curr_unavailable_actions_mask,
+        ) = self._create_action_tensor_and_mask(
+            max_number_actions, curr_available_actions
+        )
+
+        (
+            next_available_actions_tensor_with_padding,
+            next_unavailable_actions_mask,
+        ) = self._create_action_tensor_and_mask(
+            max_number_actions, next_available_actions
+        )
+
+        self._store_transition(
+            state,
+            action,
+            reward,
+            terminated,
+            curr_available_actions_tensor_with_padding,
+            curr_unavailable_actions_mask,
+            next_state,
+            next_available_actions_tensor_with_padding,
+            next_unavailable_actions_mask,
+            cost,
+        )
 
     @property
-    def device(self) -> torch.device:
-        return self._device
+    def device_for_batches(self) -> torch.device:
+        return self._device_for_batches
 
-    @device.setter
-    def device(self, value: torch.device) -> None:
-        self._device = value
+    @device_for_batches.setter
+    def device_for_batches(self, new_device_for_batches: torch.device) -> None:
+        self._device_for_batches = new_device_for_batches
 
-    def _process_single_state(self, state: SubjectiveState) -> torch.Tensor:
-        if isinstance(state, torch.Tensor):
-            return state.clone().detach().to(self._device).unsqueeze(0)
+    def _process_single_state(
+        self, state: Optional[SubjectiveState]
+    ) -> Optional[torch.Tensor]:
+        if state is None:
+            return None
         else:
-            return torch.tensor(state, device=self._device).unsqueeze(0)
+            return self._process_non_optional_single_state(state)
+
+    def _process_non_optional_single_state(
+        self, state: SubjectiveState
+    ) -> torch.Tensor:
+        if isinstance(state, torch.Tensor):
+            return state.to(get_default_device()).clone().detach().unsqueeze(0)
+        else:
+            return torch.tensor(state).unsqueeze(0)
 
     def _process_single_action(self, action: Action) -> torch.Tensor:
         if isinstance(action, torch.Tensor):
-            return action.clone().detach().to(self._device).unsqueeze(0)
+            return action.to(get_default_device()).clone().detach().unsqueeze(0)
         else:
-            return torch.tensor(action, device=self._device).unsqueeze(0)
+            return torch.tensor(action).unsqueeze(0)
 
     def _process_single_reward(self, reward: Reward) -> torch.Tensor:
-        return torch.tensor([reward], device=self._device)
+        return torch.tensor([reward])
 
     def _process_single_cost(self, cost: Optional[float]) -> Optional[torch.Tensor]:
         if cost is None:
             return None
-        return torch.tensor([cost], device=self._device)
+        return torch.tensor([cost])
 
-    def _process_single_done(self, done: bool) -> torch.Tensor:
-        return torch.tensor([done], device=self._device)  # (1,)
-
-    """
-    This function is only used for discrete action space.
-    An example:
-    ----------------------------------------------------------
-    Suppose the environment at every step has a maximum number of 5 actions, and
-    the agent uses a onehot action representation module. At time step t, if the agent offers
-    2 actions, [0, 3], then the result of this function will be:
-    available_actions_tensor_with_padding = [
-        [0],
-        [3],
-        [0],
-        [0],
-        [0],
-    ]
-    unavailable_actions_mask = [0, 0, 1, 1, 1]
-    Note that although the actions and padding can have overlap, the mask will always disable the
-    unavailable actions so won't impact algorithm.
-
-    The same goes to the case where the agent uses an identity action representation
-    (assuming some random features for action 0 and 3), then it would be
-    available_actions_tensor_with_padding = [
-        [0.1, 0.6, 0.3, 1.8, 2.0],
-        [0.8, -0.3, 0.6, 1.9, 3.0],
-        [0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0],
-    ]
-    unavailable_actions_mask = [0, 0, 1, 1, 1]
-    """
+    def _process_single_terminated(self, terminated: bool) -> torch.Tensor:
+        return torch.tensor([terminated])  # (1,)
 
     def _create_action_tensor_and_mask(
-        self, max_number_actions: Optional[int], available_action_space: ActionSpace
+        self,
+        max_number_actions: Optional[int],
+        available_action_space: Optional[ActionSpace],
     ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
-        if self._is_action_continuous or max_number_actions is None:
+        """
+        Takes an action space containing only available actions,
+        and the maximum number of actions possible.
+
+        If the action space is continuous, returns (None, None).
+
+        If the action space is discrete, returns a pair of tensors:
+
+        1. A tensor of shape (1 x action_space_size x action_dim) that contains the available
+        actions.
+        2. A mask tensor of shape (1 x action_space_size) that contains 0 for available actions.
+
+        Example:
+        ----------------------------------------------------------
+        Suppose the environment at every step has a maximum number of 5 actions, and
+        the agent uses a onehot action representation module. At time step t, if the agent offers
+        2 actions, [0, 3], then the result of this function will be:
+        available_actions_tensor_with_padding = [
+            [0],
+            [3],
+            [0],
+            [0],
+            [0],
+        ]
+        unavailable_actions_mask = [0, 0, 1, 1, 1]
+        Note that although the actions and padding can overlap, the mask will always disable
+        the unavailable actions so won't impact algorithm.
+
+        The same goes to the case where the agent uses an identity action representation
+        (assuming some random features for action 0 and 3), then it would be
+        available_actions_tensor_with_padding = [
+            [0.1, 0.6, 0.3, 1.8, 2.0],
+            [0.8, -0.3, 0.6, 1.9, 3.0],
+            [0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0],
+        ]
+        unavailable_actions_mask = [0, 0, 1, 1, 1]
+        """
+        if (
+            self._is_action_continuous
+            or max_number_actions is None
+            or available_action_space is None
+        ):
             return (None, None)
 
         # assert isinstance(available_action_space, DiscreteActionSpace), f"{type(available_action_space)=} is not DiscreteActionSpace."
 
         available_actions_tensor_with_padding = torch.zeros(
             (1, max_number_actions, available_action_space.action_dim),
-            device=self._device,
             dtype=torch.float32,
         )  # (1 x action_space_size x action_dim)
         available_actions_tensor = available_action_space.actions_batch
-        available_actions_tensor_with_padding[
-            0, : available_action_space.n, :
-        ] = available_actions_tensor
+        available_actions_tensor_with_padding[0, : available_action_space.n, :] = (
+            available_actions_tensor
+        )
 
         unavailable_actions_mask = torch.zeros(
-            (1, max_number_actions), device=self._device
+            (1, max_number_actions)
         )  # (1 x action_space_size)
         unavailable_actions_mask[0, available_action_space.n :] = 1
         unavailable_actions_mask = unavailable_actions_mask.bool()
@@ -145,7 +229,7 @@ class TensorBasedReplayBuffer(ReplayBuffer):
           curr_available_actions_mask = tensor(batch_size, action_dim),
           next_available_actions = tensor(batch_size, action_dim, action_dim),
           next_available_actions_mask = tensor(batch_size, action_dim),
-          done = tensor(batch_size, ),
+          terminated = tensor(batch_size, ),
         )
         """
         if batch_size > len(self):
@@ -184,7 +268,7 @@ class TensorBasedReplayBuffer(ReplayBuffer):
         action_list = []
         reward_list = []
         cost_list = []
-        done_list = []
+        terminated_list = []
         next_state_list = []
         next_action_list = []
         curr_available_actions_list = []
@@ -216,7 +300,7 @@ class TensorBasedReplayBuffer(ReplayBuffer):
             state_list.append(x.state)
             action_list.append(x.action)
             reward_list.append(x.reward)
-            done_list.append(x.done)
+            terminated_list.append(x.terminated)
             if has_cost_available:
                 cost_list.append(x.cost)
             if has_next_state:
@@ -247,7 +331,7 @@ class TensorBasedReplayBuffer(ReplayBuffer):
             raise RuntimeError(f"{action_list=}")
 
         reward_batch = torch.cat(reward_list)
-        done_batch = torch.cat(done_list)
+        terminated_batch = torch.cat(terminated_list)
         if has_cost_available:
             cost_batch = torch.cat(cost_list)
         else:
@@ -289,6 +373,6 @@ class TensorBasedReplayBuffer(ReplayBuffer):
             curr_unavailable_actions_mask=curr_unavailable_actions_mask_batch,
             next_available_actions=next_available_actions_batch,
             next_unavailable_actions_mask=next_unavailable_actions_mask_batch,
-            done=done_batch,
+            terminated=terminated_batch,
             cost=cost_batch,
-        ).to(self.device)
+        ).to(self.device_for_batches)

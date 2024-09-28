@@ -5,6 +5,8 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+# pyre-strict
+
 from typing import Optional
 
 import torch
@@ -26,7 +28,6 @@ class PropensityExploration(ExplorationModule):
     def __init__(self) -> None:
         super(PropensityExploration, self).__init__()
 
-    # TODO: We should make discrete action space itself iterable
     def act(
         self,
         subjective_state: SubjectiveState,
@@ -36,4 +37,7 @@ class PropensityExploration(ExplorationModule):
         action_availability_mask: Optional[torch.Tensor] = None,
         representation: Optional[torch.nn.Module] = None,
     ) -> Action:
-        return torch.distributions.Categorical(values).sample()
+        if not isinstance(action_space, DiscreteActionSpace):
+            raise TypeError("action space must be discrete")
+        action_index = torch.distributions.Categorical(values).sample()
+        return action_space.actions[action_index]

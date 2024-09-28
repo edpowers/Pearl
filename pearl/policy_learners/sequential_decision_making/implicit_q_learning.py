@@ -5,7 +5,9 @@
 # LICENSE file in the root directory of this source tree.
 #
 
-from typing import Any, Dict, List, Optional, Type
+# pyre-strict
+
+from typing import Any, Dict, List, Optional, Type, Union
 
 import torch
 from pearl.action_representation_modules.action_representation_module import (
@@ -42,10 +44,12 @@ from pearl.policy_learners.exploration_modules.exploration_module import (
 )
 from pearl.policy_learners.sequential_decision_making.actor_critic_base import (
     ActorCriticBase,
-    twin_critic_action_value_loss,
 )
 
 from pearl.replay_buffers.transition import TransitionBatch
+from pearl.utils.functional_utils.learning.critic_utils import (
+    twin_critic_action_value_loss,
+)
 from torch import optim
 
 
@@ -91,6 +95,10 @@ class ImplicitQLearning(ActorCriticBase):
         temperature_advantage_weighted_regression: float = 0.5,
         advantage_clamp: float = 100.0,
         action_representation_module: Optional[ActionRepresentationModule] = None,
+        actor_network_instance: Optional[ActorNetwork] = None,
+        critic_network_instance: Optional[
+            Union[ValueNetwork, QValueNetwork, torch.nn.Module]
+        ] = None,
     ) -> None:
         super(ImplicitQLearning, self).__init__(
             state_dim=state_dim,
@@ -105,29 +113,23 @@ class ImplicitQLearning(ActorCriticBase):
             use_critic_target=True,
             critic_soft_update_tau=critic_soft_update_tau,
             use_twin_critic=True,
-            exploration_module=exploration_module
-            if exploration_module is not None
-            else NoExploration(),
+            exploration_module=(
+                exploration_module
+                if exploration_module is not None
+                else NoExploration()
+            ),
             discount_factor=discount_factor,
             training_rounds=training_rounds,
             batch_size=batch_size,
             is_action_continuous=action_space.is_continuous,  # inferred from the action space
             on_policy=False,
             action_representation_module=action_representation_module,
+            actor_network_instance=actor_network_instance,
+            critic_network_instance=critic_network_instance,
         )
 
         self._expectile = expectile
         self._is_action_continuous: bool = action_space.is_continuous
-
-        # TODO: create actor network interfaces for discrete and continuous actor networks
-        # and use the continuous one in this test.
-        if self._is_action_continuous:
-            torch._assert(
-                actor_network_type == GaussianActorNetwork
-                or actor_network_type == VanillaContinuousActorNetwork,
-                "continuous action space requires a deterministic or a stochastic actor which works"
-                "with continuous action spaces",
-            )
 
         self._temperature_advantage_weighted_regression = (
             temperature_advantage_weighted_regression
@@ -258,7 +260,9 @@ class ImplicitQLearning(ActorCriticBase):
 
             # compute targets for batch of (state, action, next_state): target y = r + gamma * V(s')
             target = (
-                values_next_states * self._discount_factor * (1 - batch.done.float())
+                values_next_states
+                * self._discount_factor
+                * (1 - batch.terminated.float())
             ) + batch.reward  # shape: (batch_size)
 
         assert isinstance(
@@ -266,7 +270,7 @@ class ImplicitQLearning(ActorCriticBase):
         ), "Critic in ImplicitQLearning should be TwinCritic"
 
         # update twin critics towards target
-        loss = twin_critic_action_value_loss(
+        loss, _, _ = twin_critic_action_value_loss(
             state_batch=batch.state,
             action_batch=batch.action,
             expected_target_batch=target,

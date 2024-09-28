@@ -5,6 +5,8 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+# pyre-strict
+
 from typing import Optional
 
 import torch
@@ -56,7 +58,7 @@ def argmax_random_tie_breaks(
     return argmax_indices
 
 
-def get_model_actions(
+def get_model_action_index_batch(
     scores: Tensor,
     mask: Optional[Tensor] = None,
     randomize_ties: bool = False,
@@ -114,7 +116,7 @@ def concatenate_actions_to_state(
     batch_size = subjective_state.shape[0]
 
     # action dim is the dimension of the output of action representation if set
-    if action_representation_module.representation_dim != -1:
+    if action_representation_module.representation_dim is not None:
         action_dim = action_representation_module.representation_dim
     else:
         action_dim = action_space.action_dim

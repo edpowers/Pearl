@@ -5,6 +5,8 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+# pyre-strict
+
 import logging
 from typing import Optional, Tuple
 
@@ -18,7 +20,11 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 class LinearRegression(MuSigmaCBModel):
     def __init__(
-        self, feature_dim: int, l2_reg_lambda: float = 1.0, gamma: float = 1.0
+        self,
+        feature_dim: int,
+        l2_reg_lambda: float = 1.0,
+        gamma: float = 1.0,
+        force_pinv: bool = False,
     ) -> None:
         """
         A linear regression model which can estimate both point prediction and uncertainty
@@ -35,10 +41,14 @@ class LinearRegression(MuSigmaCBModel):
         gamma: discounting multiplier (A and b get multiplied by gamma periodically, the period
             is controlled by PolicyLearner). We use a simplified implementation of
             https://arxiv.org/pdf/1909.09146.pdf
+        force_pinv: If True, we will always use pseudo inverse to invert the `A` matrix. If False,
+            we will first try to use regular matrix inversion. If it fails, we will fallback to
+            pseudo inverse.
         """
         super(LinearRegression, self).__init__(feature_dim=feature_dim)
         self.gamma = gamma
         self.l2_reg_lambda = l2_reg_lambda
+        self.force_pinv = force_pinv
         assert (
             gamma > 0 and gamma <= 1
         ), f"gamma should be in (0, 1]. Got gamma={gamma} instead"
@@ -94,27 +104,36 @@ class LinearRegression(MuSigmaCBModel):
         return result
 
     @staticmethod
-    def matrix_inv_fallback_pinv(A: torch.Tensor) -> torch.Tensor:
+    def pinv(A: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the pseudo inverse of A using torch.linalg.pinv
+        """
+        # first check if A is Hermitian (symmetric A)
+        A_is_hermitian = torch.allclose(A, A.T, atol=1e-4, rtol=1e-4)
+        # applying hermitian=True saves about 50% computations
+        return torch.linalg.pinv(
+            A,
+            hermitian=A_is_hermitian,
+        ).contiguous()
+
+    def matrix_inv_fallback_pinv(self, A: torch.Tensor) -> torch.Tensor:
         """
         Try to apply regular matrix inv. If it fails, fallback to pseudo inverse
         """
+        if self.force_pinv:
+            return self.pinv(A)
         try:
-            inv_A = torch.linalg.inv(A).contiguous()
+            return torch.linalg.inv(A).contiguous()
         # pyre-ignore[16]: Module `_C` has no attribute `_LinAlgError`.
+        # pyre-fixme[66]: Exception handler type annotation `unknown` must extend
+        #  BaseException.
         except torch._C._LinAlgError as e:
             logger.warning(
                 "Exception raised during A inversion, falling back to pseudo-inverse",
                 e,
             )
             # switch from `inv` to `pinv`
-            # first check if A is Hermitian (symmetric A)
-            A_is_hermitian = torch.allclose(A, A.T, atol=1e-4, rtol=1e-4)
-            # applying hermitian=True saves about 50% computations
-            inv_A = torch.linalg.pinv(
-                A,
-                hermitian=A_is_hermitian,
-            ).contiguous()
-        return inv_A
+            return self.pinv(A)
 
     def _validate_train_inputs(
         self, x: torch.Tensor, y: torch.Tensor, weight: Optional[torch.Tensor]
@@ -149,7 +168,8 @@ class LinearRegression(MuSigmaCBModel):
         x, y, weight = self._validate_train_inputs(x, y, weight)
 
         delta_A = torch.matmul(x.t(), x * weight)
-        delta_b = torch.matmul(x.t(), y * weight).squeeze()
+        delta_A = (delta_A + delta_A.t()) / 2  # symmetrize to avoid numerical errors
+        delta_b = torch.matmul(x.t(), y * weight).squeeze(-1)
         delta_sum_weight = weight.sum()
 
         if self.distribution_enabled:

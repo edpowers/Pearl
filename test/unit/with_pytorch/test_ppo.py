@@ -5,6 +5,8 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+# pyre-strict
+
 import unittest
 
 import torch
@@ -28,6 +30,7 @@ class TestPPO(unittest.TestCase):
             16,
             DiscreteActionSpace(actions=[torch.tensor(i) for i in range(3)]),
             actor_hidden_dims=[64, 64],
+            use_critic=True,
             critic_hidden_dims=[64, 64],
             training_rounds=1,
             batch_size=500,
@@ -43,22 +46,6 @@ class TestPPO(unittest.TestCase):
         )
         self.assertEqual(optimizer_params_count, model_params_count)
 
-    def test_training_round_setup(self) -> None:
-        """
-        PPO inherit from PG and overwrite training_rounds
-        This test is to ensure it indeed overwrite
-        """
-        policy_learner = ProximalPolicyOptimization(
-            16,
-            DiscreteActionSpace(actions=[torch.tensor(i) for i in range(3)]),
-            actor_hidden_dims=[64, 64],
-            critic_hidden_dims=[64, 64],
-            training_rounds=10,
-            batch_size=500,
-            epsilon=0.1,
-        )
-        self.assertEqual(10, policy_learner._training_rounds)
-
     def test_preprocess_replay_buffer(self) -> None:
         """
         PPO computes generalized advantage estimation and truncated lambda return
@@ -70,6 +57,7 @@ class TestPPO(unittest.TestCase):
             state_dim=state_dim,
             action_space=action_space,
             actor_hidden_dims=[64, 64],
+            use_critic=True,
             critic_hidden_dims=[64, 64],
             training_rounds=10,
             batch_size=500,
@@ -89,7 +77,7 @@ class TestPPO(unittest.TestCase):
                 next_state=torch.tensor([i * 1.0]),
                 curr_available_actions=action_space,
                 next_available_actions=action_space,
-                done=False,
+                terminated=False,
                 max_number_actions=action_space.n,
             )
         # gaes:

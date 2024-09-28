@@ -5,6 +5,8 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+# pyre-strict
+
 from typing import Any, Dict, Optional
 
 import torch
@@ -46,6 +48,7 @@ class LinearBandit(ContextualBanditBase):
         gamma: float = 1.0,
         apply_discounting_interval: float = 0.0,  # discounting will be applied after this many
         # observations (weighted) are processed. set to 0 to disable
+        force_pinv: bool = False,  # If True, use pseudo inverse instead of regular inverse for `A`
         training_rounds: int = 100,
         batch_size: int = 128,
         action_representation_module: Optional[ActionRepresentationModule] = None,
@@ -58,7 +61,10 @@ class LinearBandit(ContextualBanditBase):
             action_representation_module=action_representation_module,
         )
         self.model = LinearRegression(
-            feature_dim=feature_dim, l2_reg_lambda=l2_reg_lambda, gamma=gamma
+            feature_dim=feature_dim,
+            l2_reg_lambda=l2_reg_lambda,
+            gamma=gamma,
+            force_pinv=force_pinv,
         )
         self.apply_discounting_interval = apply_discounting_interval
         self.last_sum_weight_when_discounted = 0.0
@@ -151,7 +157,6 @@ class LinearBandit(ContextualBanditBase):
             UCB scores when exploration module is UCB
             Shape is (batch)
         """
-        assert isinstance(self._exploration_module, ScoreExplorationBase)
         feature = concatenate_actions_to_state(
             subjective_state=subjective_state,
             action_space=action_space,
@@ -163,4 +168,4 @@ class LinearBandit(ContextualBanditBase):
             values=self.model(feature),
             action_space=action_space,
             representation=self.model,
-        ).squeeze()
+        ).squeeze(-1)

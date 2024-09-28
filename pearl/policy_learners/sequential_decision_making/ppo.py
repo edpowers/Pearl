@@ -5,7 +5,9 @@
 # LICENSE file in the root directory of this source tree.
 #
 
-from typing import Any, Dict, List, Optional, Type
+# pyre-strict
+
+from typing import Any, Dict, List, Optional, Type, Union
 
 import torch
 from pearl.action_representation_modules.action_representation_module import (
@@ -29,7 +31,6 @@ from pearl.policy_learners.exploration_modules.exploration_module import (
 )
 from pearl.policy_learners.sequential_decision_making.actor_critic_base import (
     ActorCriticBase,
-    single_critic_state_value_loss,
 )
 from pearl.replay_buffers.replay_buffer import ReplayBuffer
 from pearl.replay_buffers.sequential_decision_making.on_policy_replay_buffer import (
@@ -38,6 +39,11 @@ from pearl.replay_buffers.sequential_decision_making.on_policy_replay_buffer imp
     OnPolicyTransitionBatch,
 )
 from pearl.replay_buffers.transition import TransitionBatch
+
+from pearl.utils.functional_utils.learning.critic_utils import (
+    single_critic_state_value_loss,
+)
+from torch import nn
 
 
 class ProximalPolicyOptimization(ActorCriticBase):
@@ -49,8 +55,9 @@ class ProximalPolicyOptimization(ActorCriticBase):
         self,
         state_dim: int,
         action_space: ActionSpace,
-        actor_hidden_dims: List[int],
-        critic_hidden_dims: Optional[List[int]],
+        use_critic: bool,
+        actor_hidden_dims: Optional[List[int]] = None,
+        critic_hidden_dims: Optional[List[int]] = None,
         actor_learning_rate: float = 1e-4,
         critic_learning_rate: float = 1e-4,
         exploration_module: Optional[ExplorationModule] = None,
@@ -63,11 +70,14 @@ class ProximalPolicyOptimization(ActorCriticBase):
         trace_decay_param: float = 0.95,
         entropy_bonus_scaling: float = 0.01,
         action_representation_module: Optional[ActionRepresentationModule] = None,
+        actor_network_instance: Optional[ActorNetwork] = None,
+        critic_network_instance: Optional[Union[ValueNetwork, nn.Module]] = None,
     ) -> None:
         super(ProximalPolicyOptimization, self).__init__(
             state_dim=state_dim,
             action_space=action_space,
             actor_hidden_dims=actor_hidden_dims,
+            use_critic=use_critic,
             critic_hidden_dims=critic_hidden_dims,
             actor_learning_rate=actor_learning_rate,
             critic_learning_rate=critic_learning_rate,
@@ -78,15 +88,19 @@ class ProximalPolicyOptimization(ActorCriticBase):
             actor_soft_update_tau=0.0,  # not used
             critic_soft_update_tau=0.0,  # not used
             use_twin_critic=False,
-            exploration_module=exploration_module
-            if exploration_module is not None
-            else PropensityExploration(),
+            exploration_module=(
+                exploration_module
+                if exploration_module is not None
+                else PropensityExploration()
+            ),
             discount_factor=discount_factor,
             training_rounds=training_rounds,
             batch_size=batch_size,
             is_action_continuous=False,
             on_policy=True,
             action_representation_module=action_representation_module,
+            actor_network_instance=actor_network_instance,
+            critic_network_instance=critic_network_instance,
         )
         self._epsilon = epsilon
         self._trace_decay_param = trace_decay_param
@@ -170,6 +184,17 @@ class ProximalPolicyOptimization(ActorCriticBase):
             torch.cat(action_list)
         )
 
+        # Transitions in the reply buffer memory are in the CPU
+        # (only sampled batches are moved to the used device, kept in replay_buffer.device)
+        # To use it in expressions involving the models,
+        # we must move them to the device being used first.
+        history_summary_batch = history_summary_batch.to(
+            replay_buffer.device_for_batches
+        )
+        action_representation_batch = action_representation_batch.to(
+            replay_buffer.device_for_batches
+        )
+
         state_values = self._critic(history_summary_batch).detach()
         action_probs = (
             self._actor.get_action_prob(
@@ -179,26 +204,38 @@ class ProximalPolicyOptimization(ActorCriticBase):
             .detach()
             .unsqueeze(-1)
         )
+
+        # Transitions in the reply buffer memory are in the CPU
+        # (only sampled batches are moved to the used device,
+        # kept in replay_buffer.device_for_batches)
+        # To use it in expressions involving the critic,
+        # we must move them to the device being used first.
+        next_state = replay_buffer.memory[-1].next_state
+        assert next_state is not None
+        next_state_in_device = next_state.to(replay_buffer.device_for_batches)
+
         # Obtain the value of the most recent state stored in the replay buffer.
         # This value is used to compute the generalized advantage estimation (gae)
         # and the truncated lambda return for all states in the replay buffer.
         next_value = self._critic(
-            self._history_summarization_module(replay_buffer.memory[-1].next_state)
+            self._history_summarization_module(next_state_in_device)
         ).detach()[
             0
         ]  # shape (1,)
         gae = torch.tensor([0.0]).to(state_values.device)
         for i, transition in enumerate(reversed(replay_buffer.memory)):
+            original_transition_device = transition.device
+            transition.to(state_values.device)
             td_error = (
                 transition.reward
-                + self._discount_factor * next_value * (~transition.done)
+                + self._discount_factor * next_value * (~transition.terminated)
                 - state_values[i]
             )
             gae = (
                 td_error
                 + self._discount_factor
                 * self._trace_decay_param
-                * (~transition.done)
+                * (~transition.terminated)
                 * gae
             )
             assert isinstance(transition, OnPolicyTransition)
@@ -208,3 +245,4 @@ class ProximalPolicyOptimization(ActorCriticBase):
             # action probabilities from the current policy
             transition.action_probs = action_probs[i]
             next_value = state_values[i]
+            transition.to(original_transition_device)

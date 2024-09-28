@@ -5,12 +5,13 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+# pyre-strict
+
 import random
 from typing import Optional
 
 import torch
 from pearl.api.action import Action
-from pearl.api.action_space import ActionSpace
 from pearl.api.reward import Reward
 from pearl.api.state import SubjectiveState
 from pearl.replay_buffers.sequential_decision_making.fifo_off_policy_replay_buffer import (  # noqa E501
@@ -20,6 +21,7 @@ from pearl.replay_buffers.transition import (
     TransitionWithBootstrapMask,
     TransitionWithBootstrapMaskBatch,
 )
+from torch import Tensor
 
 
 class BootstrapReplayBuffer(FIFOOffPolicyReplayBuffer):
@@ -54,37 +56,26 @@ class BootstrapReplayBuffer(FIFOOffPolicyReplayBuffer):
         self.p = p
         self.ensemble_size = ensemble_size
 
-    def push(
+    def _store_transition(
         self,
         state: SubjectiveState,
         action: Action,
         reward: Reward,
-        next_state: SubjectiveState,
-        curr_available_actions: ActionSpace,
-        next_available_actions: ActionSpace,
-        done: bool,
-        max_number_actions: Optional[int] = None,
+        terminated: bool,
+        curr_available_actions_tensor_with_padding: Optional[Tensor],
+        curr_unavailable_actions_mask: Optional[Tensor],
+        next_state: Optional[SubjectiveState],
+        next_available_actions_tensor_with_padding: Optional[Tensor],
+        next_unavailable_actions_mask: Optional[Tensor],
         cost: Optional[float] = None,
     ) -> None:
         # sample the bootstrap mask from Bernoulli(p) on each push
         probs = torch.tensor(self.p).repeat(1, self.ensemble_size)
         bootstrap_mask = torch.bernoulli(probs)
-        (
-            curr_available_actions_tensor_with_padding,
-            curr_unavailable_actions_mask,
-        ) = self._create_action_tensor_and_mask(
-            max_number_actions, curr_available_actions
-        )
 
-        (
-            next_available_actions_tensor_with_padding,
-            next_unavailable_actions_mask,
-        ) = self._create_action_tensor_and_mask(
-            max_number_actions, next_available_actions
-        )
         self.memory.append(
             TransitionWithBootstrapMask(
-                state=self._process_single_state(state),
+                state=self._process_non_optional_single_state(state),
                 action=self._process_single_action(action),
                 reward=self._process_single_reward(reward),
                 next_state=self._process_single_state(next_state),
@@ -92,7 +83,7 @@ class BootstrapReplayBuffer(FIFOOffPolicyReplayBuffer):
                 curr_unavailable_actions_mask=curr_unavailable_actions_mask,
                 next_available_actions=next_available_actions_tensor_with_padding,
                 next_unavailable_actions_mask=next_unavailable_actions_mask,
-                done=self._process_single_done(done),
+                terminated=self._process_single_terminated(terminated),
                 cost=self._process_single_cost(cost),
                 bootstrap_mask=bootstrap_mask,
             )
@@ -127,6 +118,6 @@ class BootstrapReplayBuffer(FIFOOffPolicyReplayBuffer):
             curr_unavailable_actions_mask=transition_batch.curr_unavailable_actions_mask,
             next_available_actions=transition_batch.next_available_actions,
             next_unavailable_actions_mask=transition_batch.next_unavailable_actions_mask,
-            done=transition_batch.done,
+            terminated=transition_batch.terminated,
             bootstrap_mask=bootstrap_mask_batch,
         )
