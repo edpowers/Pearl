@@ -36,6 +36,7 @@ from pearl.policy_learners.exploration_modules.exploration_module import (
 from pearl.policy_learners.policy_learner import PolicyLearner
 from pearl.replay_buffers.transition import TransitionBatch
 
+from pearl.utils.device import get_pearl_device
 from pearl.utils.functional_utils.learning.loss_fn_utils import compute_cql_loss
 from pearl.utils.instantiations.spaces.discrete_action import DiscreteActionSpace
 from torch import optim
@@ -207,15 +208,16 @@ class DeepTDLearning(PolicyLearner):
         # Fix the available action space.
         # assert isinstance(available_action_space, DiscreteActionSpace)
         with torch.no_grad():
+            device = next(self._Q.parameters()).device
             states_repeated = torch.repeat_interleave(
                 subjective_state.unsqueeze(0),
                 available_action_space.n,
                 dim=0,
-            )
+            ).to(device)
             # (action_space_size x state_dim)
 
             actions = self._action_representation_module(
-                available_action_space.actions_batch.to(states_repeated)
+                available_action_space.actions_batch.to(device)
             )
             # (action_space_size, action_dim)
             tensor_float_types = (
@@ -225,12 +227,15 @@ class DeepTDLearning(PolicyLearner):
             )
 
             # Check the data types of each: coerce to float64
-            if states_repeated.dtype != actions.dtype and states_repeated.dtype in tensor_float_types:
+            if (
+                states_repeated.dtype != actions.dtype
+                and states_repeated.dtype in tensor_float_types
+            ):
                 actions = actions.to(states_repeated.dtype)
 
-            assert actions.dtype == states_repeated.dtype, (
-                f"{actions.dtype=} {states_repeated.dtype=}"
-            )
+            assert (
+                actions.dtype == states_repeated.dtype
+            ), f"{actions.dtype=} {states_repeated.dtype=}"
 
             # Possible data loss here: if states_repeated is float64 and actions is float32
             # But this is necessary for the forward pass to work.
@@ -238,13 +243,18 @@ class DeepTDLearning(PolicyLearner):
             states_repeated = states_repeated.to(torch.float32)
 
             assert actions.dtype == torch.int64, f"{actions.dtype=} {actions=}"
-            assert states_repeated.dtype == torch.float32, f"{states_repeated.dtype=} {states_repeated=}"
+            assert (
+                states_repeated.dtype == torch.float32
+            ), f"{states_repeated.dtype=} {states_repeated=}"
 
             # display(f"{states_repeated.shape=} {actions.shape=}")
 
             self.states_repeated_shape = states_repeated.shape[1]
 
-            transform_layer = torch.nn.Linear(states_repeated.shape[1], self.state_dim)
+            transform_layer = torch.nn.Linear(
+                states_repeated.shape[1], self.state_dim
+            ).to(device)
+
             states_repeated_transformed = transform_layer(states_repeated)
 
             # display(f"{states_repeated_transformed.shape=}")
@@ -296,12 +306,15 @@ class DeepTDLearning(PolicyLearner):
         action_batch = batch.action  # (batch_size x action_dim)
         reward_batch = batch.reward  # (batch_size)
         terminated_batch = batch.terminated  # (batch_size)
+        device = get_pearl_device()
 
         action_batch = action_batch.to(dtype=torch.int64)
         state_batch = state_batch.to(torch.float32)
 
         if state_batch.size(1) > 10:
-            transform_layer = torch.nn.Linear(state_batch.size(1), self.state_dim)
+            transform_layer = torch.nn.Linear(state_batch.size(1), self.state_dim).to(
+                device
+            )
             state_batch = transform_layer(state_batch)
 
         batch.state = state_batch
@@ -332,7 +345,6 @@ class DeepTDLearning(PolicyLearner):
         expected_state_action_values = expected_state_action_values.to(
             dtype=torch.float32
         )
-
 
         criterion = torch.nn.MSELoss()
         bellman_loss = criterion(state_action_values, expected_state_action_values)

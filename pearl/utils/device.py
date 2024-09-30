@@ -47,17 +47,23 @@ def get_device(module: torch.nn.Module) -> torch.device:
 
 
 def get_pearl_device(device_id: int = -1) -> torch.device:
-    if device_id != -1:
-        return torch.device("cuda:" + str(device_id))
+    # if device_id != -1:
+    #     return torch.device("cuda:" + str(device_id))
 
-    try:
-        # This is to pytorch distributed run, and should not affect
-        # original implementation of this file
-        local_rank = dist.get_rank()
-    except Exception:
-        local_rank = 0
+    # try:
+    #     # This is to pytorch distributed run, and should not affect
+    #     # original implementation of this file
+    #     local_rank = dist.get_rank()
+    # except Exception:
+    #     local_rank = 0
 
-    return torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
+    # return torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    elif torch.cuda.is_available():
+        return torch.device("cuda")
+    else:
+        return torch.device("cpu")
 
 
 def is_distribution_enabled() -> bool:
@@ -70,4 +76,5 @@ def get_default_device() -> torch.device:
     the device on which factory methods without a `device`
     specification place their tensors.
     """
-    return torch.tensor(0).device
+    # return torch.tensor(0).device
+    return get_pearl_device()

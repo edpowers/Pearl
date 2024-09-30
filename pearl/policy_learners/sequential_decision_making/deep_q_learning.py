@@ -29,6 +29,7 @@ from pearl.policy_learners.sequential_decision_making.deep_td_learning import (
     DeepTDLearning,
 )
 from pearl.replay_buffers.transition import TransitionBatch
+from pearl.utils.device import get_pearl_device
 from pearl.utils.instantiations.spaces.discrete_action import DiscreteActionSpace
 
 
@@ -143,6 +144,7 @@ class DeepQLearning(DeepTDLearning):
         Returns:
             torch.Tensor: Maximum Q-value over all available actions in the next state.
         """
+        device = get_pearl_device()
 
         (
             next_state,  # (batch_size x action_space_size x state_dim)
@@ -180,8 +182,12 @@ class DeepQLearning(DeepTDLearning):
         next_state_transformed = next_state[:, 0, :]
         next_actions_transformed = next_available_actions[:, 0, :]
 
-        transform_layer = torch.nn.Linear(in_features=self.states_repeated_shape, out_features=self.state_dim)  # Transformation from 994 to 124 features
-        next_state_transformed_input = transform_layer(next_state_transformed)  # Applying the transformation
+        transform_layer = torch.nn.Linear(
+            in_features=self.states_repeated_shape, out_features=self.state_dim
+        ).to(device)  # Transformation from 994 to 124 features
+        next_state_transformed_input = transform_layer(
+            next_state_transformed
+        )  # Applying the transformation
 
         # display(f"{next_state_transformed.shape=}")
         next_state_action_values = self._Q_target.get_q_values(
@@ -199,7 +205,6 @@ class DeepQLearning(DeepTDLearning):
     def _prepare_next_state_action_batch(
         self, batch: TransitionBatch
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
-
         # This function outputs tensors:
         # - next_state_batch: (batch_size x action_space_size x state_dim).
         # - next_available_actions_batch: (batch_size x action_space_size x action_dim).

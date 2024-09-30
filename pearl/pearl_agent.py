@@ -141,7 +141,7 @@ class PearlAgent(Agent):
         # PolicyLearner requires all tensor inputs to be already on the correct device
         # before being passed to it.
         subjective_state_to_be_used = (
-            torch.as_tensor(self._subjective_state).to(self.device)
+            torch.as_tensor(self._subjective_state, dtype=torch.float32).to(self.device)
             if self.policy_learner.requires_tensors  # temporary fix before abstract interfaces
             else self._subjective_state
         )
@@ -156,7 +156,9 @@ class PearlAgent(Agent):
             safe_action_space.to(self.device)
 
         action = self.policy_learner.act(
-            subjective_state_to_be_used, safe_action_space, exploit=exploit  # pyre-fixme[6]
+            subjective_state_to_be_used,
+            safe_action_space,
+            exploit=exploit,  # pyre-fixme[6]
         )
 
         self._latest_action = action
@@ -246,14 +248,20 @@ class PearlAgent(Agent):
         if self._latest_action is not None:
             latest_action_representation = (
                 self.policy_learner.action_representation_module(
-                    torch.as_tensor(self._latest_action).unsqueeze(0).to(self.device)
+                    torch.as_tensor(self._latest_action, dtype=torch.float32)
+                    .unsqueeze(0)
+                    .to(self.device)
                 )
             )
-        observation_to_be_used = (
-            torch.as_tensor(observation).to(self.device)
-            if self.policy_learner.requires_tensors  # temporary fix before abstract interfaces
-            else observation
-        )
+        observation_to_be_used = observation
+        if self.policy_learner.requires_tensors:
+            if self.device.type == "mps":
+                observation_tensor = torch.as_tensor(
+                    observation, dtype=torch.float32
+                ).to(self.device)
+            else:
+                observation_tensor = torch.as_tensor(observation).to(self.device)
+            observation_to_be_used = observation_tensor
 
         return self.history_summarization_module.summarize_history(
             observation_to_be_used, latest_action_representation
