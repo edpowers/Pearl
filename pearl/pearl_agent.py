@@ -255,7 +255,12 @@ class PearlAgent(Agent):
             )
         observation_to_be_used = observation
         if self.policy_learner.requires_tensors:
-            if self.device.type == "mps":
+            if isinstance(self.device, torch.device):
+                if self.device.type == "mps":
+                    observation_tensor = torch.as_tensor(
+                        observation, dtype=torch.float32
+                    ).to(self.device)
+            elif isinstance(self.device, str):
                 observation_tensor = torch.as_tensor(
                     observation, dtype=torch.float32
                 ).to(self.device)
